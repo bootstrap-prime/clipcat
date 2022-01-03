@@ -196,6 +196,7 @@ impl PidFile {
         std::fs::remove_file(&self.path).context(error::RemovePidFile { pid_file: self.path })?;
         Ok(())
     }
+
     fn set(&self) -> Result<(), Error> {
         tracing::info!("Setting PID file: {:?}", self.path);
         std::fs::write(&self.path(), std::process::id().to_string().as_bytes())

@@ -60,14 +60,24 @@ impl Default for Config {
 
 impl Default for Monitor {
     fn default() -> Monitor {
-        Monitor { load_current: true, enable_clipboard: true, enable_primary: true, filter_min_size: 0 }
+        Monitor {
+            load_current: true,
+            enable_clipboard: true,
+            enable_primary: true,
+            filter_min_size: 0,
+        }
     }
 }
 
 impl Into<clipcat::ClipboardMonitorOptions> for Monitor {
     fn into(self) -> clipcat::ClipboardMonitorOptions {
         let Monitor { load_current, enable_clipboard, enable_primary, filter_min_size } = self;
-        clipcat::ClipboardMonitorOptions { load_current, enable_clipboard, enable_primary, filter_min_size }
+        clipcat::ClipboardMonitorOptions {
+            load_current,
+            enable_clipboard,
+            enable_primary,
+            filter_min_size,
+        }
     }
 }
 

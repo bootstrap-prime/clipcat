@@ -1,15 +1,15 @@
 [package]
 name = "clipcat"
 version = "0.5.0"
-authors = ["xrelkd 46590321+xrelkd@users.noreply.github.com"]
-edition = "2018"
+authors = ["xrelkd <46590321+xrelkd@users.noreply.github.com>", "Icelk <main@icelk.dev>", "bootstrap-prime <bootstrap.prime@gmail.com>"]
+edition = "2021"
 
 [features]
 all = ["clipcatd", "clipcatctl", "clipcat-menu", "clipcat-notify"]
 default = ["clipcatd", "clipcatctl", "clipcat-menu"]
 
 app = ["app_dirs", "structopt", "toml", "tracing-subscriber", "tracing-futures"]
-monitor = ["x11-clipboard"]
+monitor = ["copypasta"]
 daemon = [
   "daemonize", "libc",
   "tracing-subscriber", "tracing-journald",
@@ -19,7 +19,8 @@ daemon = [
 external_editor = ["tokio/process"]
 builtin_finder = ["skim"]
 
-wayland = ["wl-clipboard-rs"]
+x11 = ["copypasta/x11"]
+wayland = ["copypasta/wayland"]
 
 clipcatd = ["app", "monitor", "daemon"]
 clipcatctl = ["app", "tokio/process", "tokio/io-std", "tokio/fs", "external_editor"]
@@ -73,8 +74,7 @@ serde = { version = "1", features = ["derive"] }
 serde_with = "1"
 serde_json = { version = "1", optional = true }
 
-x11-clipboard = { git = "https://github.com/xrelkd/x11-clipboard", tag = "v0.6.0", optional = true }
-wl-clipboard-rs = { version = "^0.4", optional = true }
+copypasta = { version = "0.7.1", optional = true }
 
 bincode = { version = "1", optional = true }
 

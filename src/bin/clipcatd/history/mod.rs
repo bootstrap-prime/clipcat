@@ -46,26 +46,18 @@ impl HistoryManager {
     }
 
     #[inline]
-    pub fn path(&self) -> &Path {
-        &self.file_path
-    }
+    pub fn path(&self) -> &Path { &self.file_path }
 }
 impl HistoryDriver for HistoryManager {
     #[inline]
-    fn put(&mut self, data: &ClipboardData) -> Result<(), HistoryError> {
-        self.driver.put(data)
-    }
+    fn put(&mut self, data: &ClipboardData) -> Result<(), HistoryError> { self.driver.put(data) }
 
     #[inline]
     #[allow(dead_code)]
-    fn clear(&mut self) -> Result<(), HistoryError> {
-        self.driver.clear()
-    }
+    fn clear(&mut self) -> Result<(), HistoryError> { self.driver.clear() }
 
     #[inline]
-    fn load(&self) -> Result<Vec<ClipboardData>, HistoryError> {
-        self.driver.load()
-    }
+    fn load(&self) -> Result<Vec<ClipboardData>, HistoryError> { self.driver.load() }
 
     #[inline]
     fn save(&mut self, data: &[ClipboardData]) -> Result<(), HistoryError> {

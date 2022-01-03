@@ -7,9 +7,9 @@ use std::{
     thread,
 };
 
+use copypasta::{ClipboardContext, ClipboardProvider};
 use snafu::ResultExt;
 use tokio::sync::broadcast::{self, error::SendError};
-use x11_clipboard::Clipboard;
 
 use crate::{error, ClipboardError, ClipboardEvent, ClipboardType, MonitorState};
 
@@ -81,9 +81,7 @@ impl ClipboardMonitor {
     }
 
     #[inline]
-    pub fn subscribe(&self) -> broadcast::Receiver<ClipboardEvent> {
-        self.event_sender.subscribe()
-    }
+    pub fn subscribe(&self) -> broadcast::Receiver<ClipboardEvent> { self.event_sender.subscribe() }
 
     #[inline]
     pub fn enable(&mut self) {
@@ -107,9 +105,7 @@ impl ClipboardMonitor {
     }
 
     #[inline]
-    pub fn is_running(&self) -> bool {
-        self.is_running.load(Ordering::Acquire)
-    }
+    pub fn is_running(&self) -> bool { self.is_running.load(Ordering::Acquire) }
 
     #[inline]
     pub fn state(&self) -> MonitorState {
@@ -128,6 +124,19 @@ fn build_thread(
     sender: broadcast::Sender<ClipboardEvent>,
     filter_min_size: usize,
 ) -> Result<thread::JoinHandle<()>, ClipboardError> {
+    let get_clipboard = || match clipboard_type {
+        ClipboardType::Clipboard => ClipboardContext::new(),
+        ClipboardType::Primary => {
+            #[cfg(feature = "wayland")]
+            return Err("Primary clipboard integration not supported on wayland.");
+
+            #[cfg(feature = "x11")]
+            use copypasta::x11_clipboard::{Primary, X11ClipboardContext};
+            #[cfg(feature = "x11")]
+            X11ClipboardContext::<Primary>::new()
+        }
+    };
+
     let send_event = move |data: &str| {
         let event = match clipboard_type {
             ClipboardType::Clipboard => ClipboardEvent::new_clipboard(data),
@@ -136,7 +145,8 @@ fn build_thread(
         sender.send(event)
     };
 
-    let clipboard = ClipboardWaitProvider::new(clipboard_type)?;
+    let clipboard: Box<dyn copypasta::ClipboardProvider> =
+        get_clipboard.context(error::InitializeX11Clipboard)?;
 
     let join_handle = thread::spawn(move || {
         let mut clipboard = clipboard;
@@ -145,14 +155,13 @@ fn build_thread(
             let result = clipboard.load();
             match result {
                 Ok(data) => {
-                    let data = String::from_utf8_lossy(&data);
                     if data.len() > filter_min_size {
                         if let Err(SendError(_curr)) = send_event(&data) {
                             tracing::info!("ClipboardEvent receiver is closed.");
                             return;
                         }
                     }
-                    data.into_owned()
+                    data
                 }
                 Err(_) => String::new(),
             }
@@ -166,10 +175,8 @@ fn build_thread(
                 Ok(curr) => {
                     if is_running.load(Ordering::Acquire)
                         && curr.len() > filter_min_size
-                        && last.as_bytes() != curr
+                        && last.as_bytes() != curr.as_bytes()
                     {
-                        let curr = String::from_utf8_lossy(&curr);
-                        last = curr.into_owned();
                         if let Err(SendError(_curr)) = send_event(&last) {
                             tracing::info!("ClipboardEvent receiver is closed.");
                             return;
@@ -181,7 +188,7 @@ fn build_thread(
                         "Failed to load clipboard, error: {}. Restarting clipboard provider.",
                         err,
                     );
-                    clipboard = match ClipboardWaitProvider::new(clipboard_type) {
+                    clipboard = match get_clipboard {
                         Ok(c) => c,
                         Err(err) => {
                             tracing::error!("Failed to restart clipboard provider, error: {}", err);
@@ -196,89 +203,33 @@ fn build_thread(
     Ok(join_handle)
 }
 
-#[cfg(not(feature = "wayland"))]
-struct ClipboardWaitProvider {
-    clipboard_type: ClipboardType,
-    clipboard: Clipboard,
-}
-#[cfg(not(feature = "wayland"))]
-impl ClipboardWaitProvider {
-    pub(crate) fn new(clipboard_type: ClipboardType) -> Result<Self, ClipboardError> {
-        let clipboard = Clipboard::new().context(error::InitializeX11Clipboard)?;
-        Ok(Self { clipboard, clipboard_type })
-    }
-    fn atoms(&self) -> (u32, u32, u32) {
-        let atom_clipboard = match self.clipboard_type {
-            ClipboardType::Clipboard => self.clipboard.getter.atoms.clipboard,
-            ClipboardType::Primary => self.clipboard.getter.atoms.primary,
-        };
-        let atom_utf8string = self.clipboard.getter.atoms.utf8_string;
-        let atom_property = self.clipboard.getter.atoms.property;
-        (atom_clipboard, atom_utf8string, atom_property)
-    }
-    pub(crate) fn load(&self) -> Result<Vec<u8>, x11_clipboard::error::Error> {
-        let (c, utf8, prop) = self.atoms();
+// type ClipResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send
+// + Sync + 'static>>;
 
-        self.clipboard.load(c, utf8, prop, None)
-    }
-    pub(crate) fn load_wait(&self) -> Result<Vec<u8>, x11_clipboard::error::Error> {
-        let (c, utf8, prop) = self.atoms();
+// struct ClipboardWaitProvider {
+//     clipboard_type: ClipboardType,
+//     clipboard: Box<dyn copypasta::ClipboardProvider>,
+// }
 
-        self.clipboard.load_wait(c, utf8, prop)
-    }
-}
-#[cfg(feature = "wayland")]
-struct ClipboardWaitProvider {
-    clipboard_type: ClipboardType,
-    last: Option<Vec<u8>>,
-}
-#[cfg(feature = "wayland")]
-impl ClipboardWaitProvider {
-    pub(crate) fn new(clipboard_type: ClipboardType) -> Result<Self, ClipboardError> {
-        let mut s = Self { clipboard_type, last: None };
-        if let Ok(last) = s.load() {
-            s.last = Some(last);
-        }
-        Ok(s)
-    }
-    fn wl_type(&self) -> wl_clipboard_rs::paste::ClipboardType {
-        match self.clipboard_type {
-            ClipboardType::Primary => wl_clipboard_rs::paste::ClipboardType::Primary,
-            ClipboardType::Clipboard => wl_clipboard_rs::paste::ClipboardType::Regular,
-        }
-    }
-    pub(crate) fn load(&self) -> Result<Vec<u8>, wl_clipboard_rs::paste::Error> {
-        use std::io::Read;
-        use wl_clipboard_rs::paste::{get_contents, Error, MimeType, Seat};
+// impl ClipboardWaitProvider {
+//     pub(crate) fn new(clipboard_type: ClipboardType) -> ClipResult<Self> {
+//         Ok(Self { clipboard, clipboard_type })
+//     }
 
-        let result = get_contents(self.wl_type(), Seat::Unspecified, MimeType::Text);
-        match result {
-            Ok((mut pipe, _mime_type)) => {
-                let mut contents = vec![];
-                pipe.read_to_end(&mut contents).map_err(Error::PipeCreation)?;
-                Ok(contents)
-            }
+//     pub(crate) fn load(&self) -> ClipResult<String> {
+// self.clipboard.get_contents() }
 
-            Err(Error::NoSeats) | Err(Error::ClipboardEmpty) | Err(Error::NoMimeType) => {
-                // The clipboard is empty, nothing to worry about.
-                Ok(vec![])
-            }
-
-            Err(err) => Err(err)?,
-        }
-    }
-    pub(crate) fn load_wait(&self) -> Result<Vec<u8>, wl_clipboard_rs::paste::Error> {
-        loop {
-            let response = self.load()?;
-            match response {
-                contents if !contents.is_empty() && Some(response) != self.last => {
-                    self.last = Some(contents.clone());
-                    return Ok(contents);
-                }
-                _ => {
-                    thread::sleep(std::time::Duration::from_millis(250));
-                }
-            }
-        }
-    }
-}
+//     pub(crate) fn load_wait(&self) -> ClipResult<String> {
+//         loop {
+//             let response = self.clipboard.get_contents()?;
+//             match response {
+//                 contents if !contents.is_empty() => {
+//                     return Ok(contents);
+//                 }
+//                 _ => {
+//                     thread::sleep(std::time::Duration::from_millis(250));
+//                 }
+//             }
+//         }
+//     }
+// }
